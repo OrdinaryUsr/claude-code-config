@@ -29,3 +29,4 @@ Review the staged changes and create a suitable commit message. Follow these ste
 7. If user confirms, execute the commit with the proposed message. If not, ask for adjustments.
 
 IMPORTANT: Always ask for user confirmation before actually running 'git commit'. Provide reasoning for your proposed commit message based on the changes observed.
+IMPORTANT: Do NOT add "Co-Authored-By" lines or any other trailers to commit messages.
