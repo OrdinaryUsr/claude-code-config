@@ -13,6 +13,7 @@ session-env/
 cache/
 paste-cache/
 plugins/cache/
+plugins/install-counts-cache.json
 
 # === Телеметрия и отладка ===
 telemetry/
