@@ -1,0 +1,37 @@
+# === Аутентификация и секреты ===
+.credentials.json
+mcp-needs-auth-cache.json
+stats-cache.json
+.update.lock
+
+# === История и сессии ===
+history.jsonl
+sessions/
+session-env/
+
+# === Кэш ===
+cache/
+paste-cache/
+plugins/cache/
+
+# === Телеметрия и отладка ===
+telemetry/
+debug/
+statsig/
+
+# === Временные / рабочие файлы ===
+todos/
+tasks/
+plans/
+backups/
+downloads/
+file-history/
+shell-snapshots/
+
+# === Проектные данные (сессии, memory, история по проектам) ===
+projects/
+
+# === Плагины (данные и состояние, не конфигурация) ===
+plugins/data/
+plugins/repos/
+plugins/marketplaces/
