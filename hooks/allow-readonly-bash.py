@@ -90,6 +90,29 @@ DURATION = re.compile(r"^\d+(\.\d+)?[smhd]?$")
 ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 REDIR_TOK = re.compile(r"^[0-9&]*[<>]")
 
+# Catastrophic `rm` targets: whole filesystem / home / cwd / parent.
+DANGER_RM_TARGET = re.compile(
+    r"^(?:/|/\*|~|~/|~/\*|\$HOME/?|\$\{HOME\}/?|\.|\.\.|\./|\.\./|\.\./\*)$"
+)
+# System dirs where ANY recursive delete (the dir itself or anything under it)
+# is catastrophic.
+DANGER_RM_SYS = re.compile(
+    r"^/(?:etc|usr|bin|sbin|lib|lib64|libexec|boot|sys|proc|dev|root)(?:/|$)"
+)
+# "Mixed" roots that have legit deep subpaths: only the dir itself, /dir/*, or
+# a whole user home (e.g. /home/alice) is catastrophic.
+DANGER_RM_ABS = re.compile(
+    r"^/(?:var|opt|run|mnt|srv|home|Users)(?:/\*?)?$"
+    r"|^/home/[^/]+/?$|^/Users/[^/]+/?$"
+)
+
+# Benign command prefixes to see through when detecting the real command word
+# (so `sudo rm`, `timeout 5 rm`, `nice -n19 rm`, `env A=b rm` are all caught).
+RM_PREFIX = {
+    "sudo", "doas", "env", "command", "builtin", "nice", "ionice",
+    "stdbuf", "nohup", "time", "timeout", "setsid",
+}
+
 
 def mask(s):
     """Return s with quoted/escaped spans replaced by 'x' (length preserved).
@@ -315,6 +338,87 @@ def decide(cmd):
     return saw_one
 
 
+def rm_args(toks):
+    """If the segment's command (seeing through benign wrappers like sudo /
+    timeout / nice) is `rm`, return the list of (orig, masked) tokens that
+    follow rm; otherwise None.
+
+    `echo rm -rf /` returns None because `echo` is not a benign prefix, so the
+    rm there is just an argument."""
+    i, n = 0, len(toks)
+    while i < n:
+        ow, mw = toks[i]
+        if ASSIGN.match(mw) or REDIR_TOK.match(mw):
+            i += 1
+            continue
+        base = ow.rsplit("/", 1)[-1]
+        if base in RM_PREFIX:
+            i += 1
+            while i < n:  # skip the wrapper's own flags / numeric args
+                _, mw2 = toks[i]
+                if mw2.startswith("-") or DURATION.match(mw2) or ASSIGN.match(mw2):
+                    i += 1
+                    continue
+                break
+            continue
+        if base == "rm":
+            return toks[i + 1:]
+        return None
+    return None
+
+
+def catastrophic_rm(cmd):
+    """Return a reason string if `cmd` contains a catastrophic recursive rm
+    (whole filesystem / home / cwd / system dir), else None.
+
+    Only the actual command word of a segment is considered (seeing through
+    sudo/timeout/...), so an `rm` that is merely an argument is ignored. We
+    DENY these outright rather than falling through to a prompt."""
+    masked = mask(cmd)
+    if masked is None:
+        return None
+    seg_view = REDIR_OK.sub(lambda m: "x" * len(m.group()), masked)
+    spans, prev = [], 0
+    for m in re.finditer(r"[\n;&|]+", seg_view):
+        spans.append((prev, m.start()))
+        prev = m.end()
+    spans.append((prev, len(cmd)))
+
+    for start, end in spans:
+        oseg, mseg = cmd[start:end], masked[start:end]
+        if not mseg.strip():
+            continue
+        toks = command_tokens(oseg, mseg)
+        args = rm_args(toks)
+        if args is None:
+            continue
+        recursive = no_preserve = False
+        targets = []
+        for ow, mw in args:
+            if mw == "--recursive":
+                recursive = True
+            elif mw == "--no-preserve-root":
+                no_preserve = True
+            elif mw.startswith("--"):
+                pass  # other long option
+            elif mw.startswith("-"):
+                if "r" in mw[1:] or "R" in mw[1:]:
+                    recursive = True
+            elif REDIR_TOK.match(mw):
+                pass
+            else:
+                targets.append(strip_quotes(ow))
+        if not recursive:
+            continue
+        if no_preserve:
+            return "rm --no-preserve-root (recursive) is never auto-allowed"
+        for tgt in targets:
+            if (DANGER_RM_TARGET.match(tgt) or DANGER_RM_SYS.match(tgt)
+                    or DANGER_RM_ABS.match(tgt)):
+                return "recursive rm of a filesystem/home/system path: %s" % tgt
+    return None
+
+
 def main():
     try:
         data = json.load(sys.stdin)
@@ -324,6 +428,23 @@ def main():
         return
     cmd = (data.get("tool_input") or {}).get("command")
     if not isinstance(cmd, str) or not cmd.strip():
+        return
+    try:
+        reason = catastrophic_rm(cmd)
+    except Exception:
+        reason = None  # never crash the guard; fall through to normal flow
+    if reason:
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": (
+                    "Blocked by allow-readonly-bash hook: " + reason
+                    + ". Delete a specific subpath instead, or run it yourself "
+                    "outside Claude if you really mean it."
+                ),
+            }
+        }))
         return
     try:
         if not decide(cmd):
