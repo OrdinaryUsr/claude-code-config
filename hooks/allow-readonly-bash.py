@@ -57,9 +57,14 @@ BLACKLIST = {
     "pkill", "killall", "reboot", "shutdown", "sudo", "su", "git", "docker",
     "kubectl", "curl", "wget", "ssh", "scp", "rsync", "nc", "ncat", "python",
     "python3", "node", "npm", "npx", "pnpm", "yarn", "pip", "pip3", "bash",
-    "sh", "zsh", "ksh", "fish", "eval", "exec", "source", "xargs", "sed",
+    "sh", "zsh", "ksh", "fish", "eval", "exec", "source", "xargs",
     "awk", "perl", "ruby", "mkdir", "touch", "crontab", "at",
 }
+
+# `sed` is read-only EXCEPT: -i/--in-place (writes), -f (external script),
+# and the w/W/r/R (file) and e (exec shell!) script commands. It is allowed
+# only when sed_ok() confirms none of those are present.
+SED_SCRIPT_BAD = re.compile(r"[ewWrR]")
 
 # Dangerous find primaries that execute or mutate.
 FIND_DANGER = re.compile(r"(?<!\w)-(?:delete|exec|execdir|ok|okdir|fprint|fprintf|fls)\b")
@@ -155,6 +160,53 @@ def effective_command(toks):
     return None
 
 
+def strip_quotes(s):
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in "'\"":
+        return s[1:-1]
+    return s
+
+
+def sed_ok(toks):
+    """True only for read-only `sed` (no in-place write, no exec, no file cmds).
+
+    Collects inline script tokens (after -e/--expression or the first non-flag
+    positional) and rejects any with file-write (w/W/r/R) or shell-exec (e)
+    sed commands. -i/--in-place and -f/--file are rejected outright."""
+    scripts, expect_script, seen_script = [], False, False
+    for oword, mword in toks[1:]:  # skip 'sed' itself
+        if mword in ("-i", "--in-place") or mword.startswith(("-i", "--in-place")):
+            return False
+        if mword in ("-f", "--file") or mword.startswith("--file="):
+            return False
+        if mword.startswith("--expression="):
+            scripts.append(oword.split("=", 1)[1])
+            seen_script = True
+            continue
+        if mword in ("-e", "--expression"):
+            expect_script = True
+            continue
+        if REDIR_TOK.match(mword):
+            continue
+        if mword.startswith("-"):
+            continue  # other flag (-n, -E, -r, -z, -s, ...)
+        if expect_script:
+            scripts.append(oword)
+            expect_script = False
+            seen_script = True
+            continue
+        if not seen_script:
+            scripts.append(oword)  # first positional is the script
+            seen_script = True
+            continue
+        # remaining positionals are file paths -> ignore
+    if not scripts:
+        return False
+    for s in scripts:
+        if SED_SCRIPT_BAD.search(strip_quotes(s)):
+            return False
+    return True
+
+
 def decide(cmd):
     masked = mask(cmd)
     if masked is None:
@@ -194,7 +246,12 @@ def decide(cmd):
             continue
         toks = command_tokens(oseg, mseg)
         name = effective_command(toks)
-        if name is None or name not in ALLOWED:
+        if name is None:
+            return False
+        if name == "sed":
+            if not sed_ok(toks):
+                return False
+        elif name not in ALLOWED:
             return False
         if name == "find" and FIND_DANGER.search(mseg):
             return False
