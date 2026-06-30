@@ -3,6 +3,8 @@
 mcp-needs-auth-cache.json
 stats-cache.json
 .update.lock
+*-cache.json
+*.lock
 
 # === История и сессии ===
 history.jsonl
@@ -36,3 +38,19 @@ projects/
 plugins/data/
 plugins/repos/
 plugins/marketplaces/
+plugins/.last_inuse_sweep
+plugins/.last_*
+plugins/blocklist.json
+plugins/installed_plugins.json
+plugins/known_marketplaces.json
+
+# === Состояние обновлений / обслуживания (генерируется CLI) ===
+.last-cleanup
+.last-update-result.json
+.last-*
+
+# === Security SDK: генерируемый venv, логи, состояние предупреждений ===
+security/
+security_warnings_state_*.json
+security_warnings_state_*.lock
+.sdk_bootstrap_spawned
