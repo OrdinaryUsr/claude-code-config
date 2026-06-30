@@ -75,8 +75,8 @@ FIND_DANGER = re.compile(r"(?<!\w)-(?:delete|exec|execdir|ok|okdir|fprint|fprint
 SECRET_PATH = re.compile(
     r"\.env(?:\.[\w.-]+)?\b"
     r"|\.ssh/|id_rsa\b|id_ed25519\b|id_ecdsa\b|id_dsa\b"
-    r"|\.aws/|\.gnupg\b|\.gpg\b|\.kube/|\.docker/config"
-    r"|\.npmrc\b|\.pypirc\b|\.netrc\b|\.git-credentials\b"
+    r"|\.aws/|\.azure/|\.gnupg\b|\.gpg\b|\.kube/|\.docker/config"
+    r"|\.config/gh/|\.npmrc\b|\.npm/|\.pypirc\b|\.netrc\b|\.git-credentials\b"
     r"|/credentials\b|credentials\.\w+"
     r"|/secrets?/|(?<![\w.])secrets?/"
     r"|\.pem\b|\.p12\b|\.pfx\b|\.key\b",
