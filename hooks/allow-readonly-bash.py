@@ -69,6 +69,20 @@ SED_SCRIPT_BAD = re.compile(r"[ewWrR]")
 # Dangerous find primaries that execute or mutate.
 FIND_DANGER = re.compile(r"(?<!\w)-(?:delete|exec|execdir|ok|okdir|fprint|fprintf|fls)\b")
 
+# Sensitive paths: even with a read-only tool (cat/head/grep/...), reading these
+# discloses secrets. Match against the ORIGINAL command (quotes don't hide a
+# substring). A match => fall through to the normal prompt, never auto-allow.
+SECRET_PATH = re.compile(
+    r"\.env(?:\.[\w.-]+)?\b"
+    r"|\.ssh/|id_rsa\b|id_ed25519\b|id_ecdsa\b|id_dsa\b"
+    r"|\.aws/|\.gnupg\b|\.gpg\b|\.kube/|\.docker/config"
+    r"|\.npmrc\b|\.pypirc\b|\.netrc\b|\.git-credentials\b"
+    r"|/credentials\b|credentials\.\w+"
+    r"|/secrets?/|(?<![\w.])secrets?/"
+    r"|\.pem\b|\.p12\b|\.pfx\b|\.key\b",
+    re.IGNORECASE,
+)
+
 # Allowed redirects: to /dev/null (any fd, append or not) or fd duplication.
 REDIR_OK = re.compile(r"(?:[0-9&]*>>?|&>>?)\s*/dev/null|[0-9]*>&[0-9-]+|&>")
 
@@ -207,9 +221,48 @@ def sed_ok(toks):
     return True
 
 
+def writes_file(name, toks):
+    """True if an otherwise read-only tool is being used to WRITE a file.
+
+    These tools live in READONLY but have a file-output mode that turns them
+    into an arbitrary-write / clobber primitive (allowlist bypass)."""
+    if name == "sort":
+        for _, mw in toks[1:]:
+            if mw in ("--output",) or mw.startswith("--output="):
+                return True
+            # short cluster containing 'o' — sort's only short -o is --output
+            if mw.startswith("-") and not mw.startswith("--") and "o" in mw[1:]:
+                return True
+    elif name == "yq":
+        for _, mw in toks[1:]:
+            if mw in ("-i", "--inplace", "--in-place"):
+                return True
+    elif name == "uniq":
+        # uniq [INPUT [OUTPUT]] — a 2nd positional is an output file it writes.
+        pos, skip = 0, False
+        for _, mw in toks[1:]:
+            if skip:
+                skip = False
+                continue
+            if mw in ("-f", "--skip-fields", "-s", "--skip-chars", "-w", "--check-chars"):
+                skip = True  # consumes a following numeric argument
+                continue
+            if mw.startswith("-"):
+                continue
+            pos += 1
+        if pos >= 2:
+            return True
+    return False
+
+
 def decide(cmd):
     masked = mask(cmd)
     if masked is None:
+        return False
+
+    # 0) Never auto-approve commands that touch sensitive/secret paths, even
+    #    with a read-only tool. Cheaper than the full parse and applies globally.
+    if SECRET_PATH.search(cmd):
         return False
 
     # 1) No command/process substitution.
@@ -254,6 +307,8 @@ def decide(cmd):
         elif name not in ALLOWED:
             return False
         if name == "find" and FIND_DANGER.search(mseg):
+            return False
+        if writes_file(name, toks):
             return False
         saw_one = True
 
