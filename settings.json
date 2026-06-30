@@ -92,5 +92,10 @@
     "security-guidance@claude-plugins-official": true,
     "claude-md-management@claude-plugins-official": true
   },
-  "theme": "dark"
+  "theme": "dark",
+  "enableAllProjectMcpServers": false,
+  "env": {
+    "DISABLE_TELEMETRY": "1",
+    "DISABLE_ERROR_REPORTING": "1"
+  }
 }
